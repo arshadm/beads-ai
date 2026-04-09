@@ -1,0 +1,26 @@
+{
+  "name": "beads-ai",
+  "version": "1.0.0",
+  "description": "RabbitMQ-driven AI agent orchestrator",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arshadm/beads-ai.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/arshadm/beads-ai/issues"
+  },
+  "homepage": "https://github.com/arshadm/beads-ai#readme",
+  "dependencies": {
+    "amqplib": "^1.0.3",
+    "dotenv": "^17.4.1",
+    "js-yaml": "^4.1.1"
+  }
+}

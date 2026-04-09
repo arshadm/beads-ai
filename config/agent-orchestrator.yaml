@@ -1,0 +1,10 @@
+projects:
+  rustc:
+    project_dir: /home/projects/rustc
+    commands:
+      plan:
+        queue: rustc-plan
+        cmd: "agent-plan agent=claude"
+      execute:
+        queue: rustc-execute
+        cmd: "agent-execute agent=claude"
