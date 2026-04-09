@@ -24,7 +24,7 @@ cp .env.example .env
 
 ```env
 RABBITMQ_HOST=amqp://localhost:5672
-EMAIL_TO=somebody@example.com
+NOTIFY_EMAIL=somebody@example.com
 CONFIG_PATH=config/agent-orchestrator.yaml
 CONCURRENCY=1
 COMMAND_TIMEOUT_MS=1800000
@@ -34,6 +34,7 @@ MAIL_BIN=mail
 
 Notes:
 
+- `NOTIFY_EMAIL` is the recipient for command-result emails. `EMAIL_TO` is still accepted as a legacy fallback.
 - `CONCURRENCY` controls RabbitMQ prefetch per queue consumer.
 - `COMMAND_TIMEOUT_MS` defaults to 30 minutes.
 - `OUTPUT_LIMIT_BYTES` defaults to 1 MB per stream (`stdout` and `stderr` separately).

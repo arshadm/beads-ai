@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "RabbitMQ-driven AI agent orchestrator",
   "main": "src/index.js",
+  "bin": {
+    "beads-ai": "./src/index.js"
+  },
   "scripts": {
     "start": "node src/index.js"
   },

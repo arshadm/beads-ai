@@ -101,11 +101,16 @@ function loadConfig() {
   const yamlConfig = loadYamlConfig(configPath);
 
   const rabbitmqHost = requiredEnv("RABBITMQ_HOST");
-  const emailTo = requiredEnv("EMAIL_TO");
+  const notifyEmail = process.env.NOTIFY_EMAIL || process.env.EMAIL_TO;
+  if (!notifyEmail) {
+    throw new Error(
+      "Missing required environment variable: NOTIFY_EMAIL (or legacy EMAIL_TO)"
+    );
+  }
 
   return {
     rabbitmqHost,
-    emailTo,
+    notifyEmail,
     mailBin: process.env.MAIL_BIN || "mail",
     concurrency: parsePositiveInt(process.env.CONCURRENCY, 1, "CONCURRENCY"),
     commandTimeoutMs: parsePositiveInt(

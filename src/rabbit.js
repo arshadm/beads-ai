@@ -8,11 +8,24 @@ function toSingleLine(text, maxLength = 120) {
 
 function parseJsonMessage(rawText) {
   try {
-    JSON.parse(rawText);
-    return { valid: true };
+    const payload = JSON.parse(rawText);
+    return { valid: true, payload };
   } catch (error) {
     return { valid: false, error };
   }
+}
+
+function getMessageField(payload, keys) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value.trim();
+    }
+  }
+  return null;
 }
 
 async function processMessage({ channel, msg, route, appConfig }) {
@@ -52,7 +65,12 @@ async function processMessage({ channel, msg, route, appConfig }) {
     `[queue=${route.queue}] Command completed status=${statusText} exitCode=${commandResult.exitCode} signal=${commandResult.signal || "-"}`
   );
 
-  const subject = `[beads-ai] ${route.projectName}/${route.action} ${statusText}`;
+  const taskId =
+    getMessageField(parsed.payload, ["task_id", "ticket_id", "id"]) || "unknown-task";
+  const taskTitle =
+    getMessageField(parsed.payload, ["title", "task_title", "prompt"]) ||
+    "untitled-task";
+  const subject = `[beads-ai] [${route.action}] ${taskId} - ${taskTitle} (${statusText})`;
   const body = buildEmailBody({
     route,
     messagePayload: rawMessage,
@@ -64,14 +82,14 @@ async function processMessage({ channel, msg, route, appConfig }) {
   try {
     await sendEmailWithRetry({
       mailBin: appConfig.mailBin,
-      to: appConfig.emailTo,
+      to: appConfig.notifyEmail,
       subject: toSingleLine(subject),
       body,
       retries: 2,
       retryDelayMs: 2000,
     });
     console.log(
-      `[queue=${route.queue}] Email sent to ${appConfig.emailTo} deliveryTag=${msg.fields.deliveryTag}`
+      `[queue=${route.queue}] Email sent to ${appConfig.notifyEmail} deliveryTag=${msg.fields.deliveryTag}`
     );
   } catch (error) {
     console.error(
