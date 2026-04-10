@@ -1,10 +1,12 @@
 projects:
   rustc:
-    project_dir: /home/projects/rustc
+    github_repo: https://github.com/teenygrad/rust.git
+    branch: main
+    prompt_dir: .ai/prompts
     commands:
       plan:
-        queue: rustc-plan
-        cmd: "agent-plan agent=claude"
+        queue: rust-plan
+        cmd: "agent plan project=rust agent=claude"
       execute:
-        queue: rustc-execute
-        cmd: "agent-execute agent=claude"
+        queue: rust-execute
+        cmd: "agent execute project=rust agent=claude"

@@ -6,6 +6,8 @@ function buildEmailBody({
   commandResult,
   deliveryTag,
   receivedAt,
+  executedCommand,
+  executionCwd,
 }) {
   const status = commandResult.timedOut
     ? "TIMEOUT"
@@ -18,7 +20,8 @@ function buildEmailBody({
     action: route.action,
     queue: route.queue,
     command: route.cmd,
-    project_dir: route.projectDir,
+    executed_command: executedCommand || route.cmd,
+    project_dir: executionCwd || route.projectDir,
     delivery_tag: deliveryTag,
     received_at: receivedAt,
     completed_at: new Date().toISOString(),

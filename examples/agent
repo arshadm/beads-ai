@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+
+def parse_cli_args(argv):
+    parsed = {}
+    for arg in argv:
+        if "=" in arg:
+            key, value = arg.split("=", 1)
+            if key:
+                parsed[key] = value
+    return parsed
+
+
+def run_command(cmd, cwd=None):
+    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Command failed ({' '.join(cmd)}): {result.stderr.strip() or result.stdout.strip()}"
+        )
+    return result.stdout.strip()
+
+
+def run_claude(prompt_path, cwd=None, env_overrides=None):
+    if not prompt_path.exists():
+        raise ValueError(f"Prompt file not found: {prompt_path}")
+
+    prompt = prompt_path.read_text(encoding="utf-8")
+    env = None
+    if env_overrides:
+        env = os.environ.copy()
+        env.update(env_overrides)
+
+    result = subprocess.run(
+        ["claude", "-p", prompt],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Claude command failed: {result.stderr.strip() or result.stdout.strip()}"
+        )
+
+    if result.stdout:
+        sys.stdout.write(result.stdout)
+    if result.stderr:
+        sys.stderr.write(result.stderr)
+
+    return f"{result.stdout}\n{result.stderr}"
+
+
+def branch_exists(repo_dir, branch_name):
+    result = subprocess.run(
+        ["git", "show-ref", "--verify", f"refs/heads/{branch_name}"],
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def remote_branch_exists(repo_dir, branch_name):
+    result = subprocess.run(
+        ["git", "ls-remote", "--exit-code", "--heads", "origin", branch_name],
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def ensure_checkout(repo_dir, branch_name, start_point=None):
+    if branch_exists(repo_dir, branch_name):
+        run_command(["git", "checkout", branch_name], cwd=repo_dir)
+        return
+
+    if remote_branch_exists(repo_dir, branch_name):
+        run_command(
+            ["git", "checkout", "-b", branch_name, f"origin/{branch_name}"],
+            cwd=repo_dir,
+        )
+        return
+
+    if start_point is None:
+        raise RuntimeError(
+            f"Branch '{branch_name}' does not exist and no start point provided."
+        )
+
+    run_command(["git", "checkout", "-b", branch_name, start_point], cwd=repo_dir)
+
+
+def infer_repo_dir(project, github_repo):
+    if project:
+        return Path.cwd() / project
+    if github_repo:
+        repo_name = Path(github_repo.rstrip("/")).name
+        if repo_name.endswith(".git"):
+            repo_name = repo_name[:-4]
+        return Path.cwd() / repo_name
+    raise ValueError(
+        "Unable to infer repository directory. Provide 'project' or 'github_repo'."
+    )
+
+
+def extract_task_id(args, payload):
+    # Support both CLI and payload variants (task-id / task_id).
+    task_id = args.get("task-id") or args.get("task_id")
+    if task_id:
+        return task_id
+
+    candidates = [
+        payload.get("task-id"),
+        payload.get("task_id"),
+    ]
+    task = payload.get("task")
+    if isinstance(task, dict):
+        candidates.extend([task.get("id"), task.get("task-id"), task.get("task_id")])
+
+    for candidate in candidates:
+        if candidate:
+            return str(candidate)
+    return None
+
+
+def sanitize_task_id(task_id):
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "-", task_id).strip("-")
+    if not sanitized:
+        raise ValueError(f"Invalid task-id '{task_id}'.")
+    return sanitized
+
+
+def main():
+    try:
+        if len(sys.argv) < 2:
+            raise ValueError("Missing action argument. Expected 'plan' or 'execute'.")
+
+        action = sys.argv[1].strip().lower()
+        if action not in {"plan", "execute"}:
+            raise ValueError(
+                f"Invalid action '{action}'. Expected 'plan' or 'execute'."
+            )
+
+        args = parse_cli_args(sys.argv[2:])
+        project = args.get("project")
+        agent = args.get("agent")
+        github_repo = args.get("github_repo")
+        branch = args.get("branch")
+        prompt_dir = args.get("prompt_dir")
+        _ = agent
+
+        data = sys.stdin.read()
+        obj = json.loads(data)
+
+        repo_dir = infer_repo_dir(project, github_repo)
+        if not repo_dir.exists():
+            if not github_repo:
+                raise ValueError(
+                    f"Repository '{repo_dir}' does not exist and github_repo was not provided."
+                )
+            run_command(
+                [
+                    "git",
+                    "clone",
+                    "--recurse-submodules",
+                    github_repo,
+                    str(repo_dir.resolve()),
+                ]
+            )
+
+        if not (repo_dir / ".git").exists():
+            raise ValueError(f"Path '{repo_dir}' exists but is not a git repository.")
+
+        run_command(["git", "fetch", "origin"], cwd=repo_dir)
+        run_command(
+            ["git", "submodule", "update", "--init", "--recursive"], cwd=repo_dir
+        )
+
+        main_branch = "main"
+        ensure_checkout(repo_dir, main_branch, start_point="origin/main")
+        run_command(
+            ["git", "submodule", "update", "--init", "--recursive"], cwd=repo_dir
+        )
+
+        task_id = extract_task_id(args, obj)
+        if task_id:
+            feature_branch = f"feat/{sanitize_task_id(task_id)}"
+        elif branch:
+            feature_branch = branch
+        else:
+            raise ValueError("Missing task-id (or branch).")
+
+        ensure_checkout(repo_dir, feature_branch, start_point=main_branch)
+
+        if not prompt_dir:
+            raise ValueError("Missing prompt_dir argument.")
+
+        prompt_root = Path(prompt_dir)
+        if not prompt_root.is_absolute():
+            prompt_root = repo_dir / prompt_root
+
+        if action == "plan":
+            if not task_id:
+                raise ValueError("Missing task-id for plan action.")
+            claude_output = run_claude(
+                prompt_root / "PLAN_TASK.md",
+                cwd=repo_dir,
+                env_overrides={"TASK_ID": str(task_id)},
+            )
+        else:
+            claude_output = run_claude(prompt_root / "EXECUTE_TASK.md", cwd=repo_dir)
+
+        if "TASK_FAILED" in claude_output:
+            raise RuntimeError("Claude reported TASK_FAILED.")
+
+        with open(f"/tmp/agent-{action}.log", "a") as f:
+            f.write(json.dumps(obj) + "\n")
+    except Exception as e:
+        sys.stderr.write(f"Error: {e}\n")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

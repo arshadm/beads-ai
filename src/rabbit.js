@@ -1,9 +1,51 @@
 const amqp = require("amqplib");
+const fs = require("fs");
+const path = require("path");
 const { runCommandWithStdin } = require("./executor");
 const { buildEmailBody, sendEmailWithRetry } = require("./email");
 
 function toSingleLine(text, maxLength = 120) {
   return text.replace(/\s+/g, " ").slice(0, maxLength);
+}
+
+function withCommandDir(cmd, commandDir) {
+  if (!commandDir || typeof commandDir !== "string" || commandDir.trim() === "") {
+    return cmd;
+  }
+
+  const match = cmd.match(/^(\s*)(\S+)([\s\S]*)$/);
+  if (!match) {
+    return cmd;
+  }
+
+  const [, leadingSpace, executable, rest] = match;
+  if (
+    executable.startsWith("/") ||
+    executable.startsWith("./") ||
+    executable.startsWith("../")
+  ) {
+    return cmd;
+  }
+
+  const normalizedDir = commandDir.replace(/\/+$/, "");
+  return `${leadingSpace}${normalizedDir}/${executable}${rest}`;
+}
+
+function appendRouteParameters(cmd, route) {
+  const args = [];
+  if (route.githubRepo) {
+    args.push(`github_repo=${route.githubRepo}`);
+  }
+  if (route.branch) {
+    args.push(`branch=${route.branch}`);
+  }
+  if (route.promptDir) {
+    args.push(`prompt_dir=${route.promptDir}`);
+  }
+  if (args.length === 0) {
+    return cmd;
+  }
+  return `${cmd} ${args.join(" ")}`;
 }
 
 function parseJsonMessage(rawText) {
@@ -28,6 +70,19 @@ function getMessageField(payload, keys) {
   return null;
 }
 
+function sanitizePathSegment(value) {
+  return value.replace(/[\\/]/g, "_");
+}
+
+function resolveWorkingDir({ appConfig, route, taskId }) {
+  if (appConfig.tempDir && appConfig.tempDir.trim() !== "") {
+    const dir = path.join(appConfig.tempDir, sanitizePathSegment(taskId));
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+  return route.projectDir;
+}
+
 async function processMessage({ channel, msg, route, appConfig }) {
   const receivedAt = new Date().toISOString();
   const rawMessage = msg.content.toString("utf8");
@@ -45,9 +100,20 @@ async function processMessage({ channel, msg, route, appConfig }) {
     `[queue=${route.queue}] Processing message deliveryTag=${msg.fields.deliveryTag}`
   );
 
+  const taskId =
+    getMessageField(parsed.payload, ["taskId", "task_id", "ticket_id", "id"]) ||
+    "unknown-task";
+  const taskTitle =
+    getMessageField(parsed.payload, ["taskTitle", "title", "task_title", "prompt"]) ||
+    "untitled-task";
+  const workingDir = resolveWorkingDir({ appConfig, route, taskId });
+  const commandToRun = appendRouteParameters(
+    withCommandDir(route.cmd, appConfig.commandDir),
+    route
+  );
   const commandResult = await runCommandWithStdin({
-    cmd: route.cmd,
-    cwd: route.projectDir,
+    cmd: commandToRun,
+    cwd: workingDir,
     stdinJson: rawMessage,
     timeoutMs: appConfig.commandTimeoutMs,
     outputLimitBytes: appConfig.outputLimitBytes,
@@ -65,11 +131,6 @@ async function processMessage({ channel, msg, route, appConfig }) {
     `[queue=${route.queue}] Command completed status=${statusText} exitCode=${commandResult.exitCode} signal=${commandResult.signal || "-"}`
   );
 
-  const taskId =
-    getMessageField(parsed.payload, ["task_id", "ticket_id", "id"]) || "unknown-task";
-  const taskTitle =
-    getMessageField(parsed.payload, ["title", "task_title", "prompt"]) ||
-    "untitled-task";
   const subject = `[beads-ai] [${route.action}] ${taskId} - ${taskTitle} (${statusText})`;
   const body = buildEmailBody({
     route,
@@ -77,6 +138,8 @@ async function processMessage({ channel, msg, route, appConfig }) {
     commandResult,
     deliveryTag: msg.fields.deliveryTag,
     receivedAt,
+    executedCommand: commandToRun,
+    executionCwd: workingDir,
   });
 
   try {

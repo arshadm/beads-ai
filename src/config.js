@@ -35,7 +35,7 @@ function loadYamlConfig(configPath) {
   return parsed;
 }
 
-function buildQueueRoutes(projects) {
+function buildQueueRoutes(projects, tempDir) {
   if (!projects || typeof projects !== "object") {
     throw new Error("YAML must contain a 'projects' object");
   }
@@ -47,14 +47,32 @@ function buildQueueRoutes(projects) {
       throw new Error(`Project '${projectName}' config must be an object`);
     }
 
-    const projectDir = projectConfig.project_dir;
+    const projectDirFromYaml = projectConfig.project_dir;
+    const githubRepo = projectConfig.github_repo;
+    const branch = projectConfig.branch;
+    const promptDir = projectConfig.prompt_dir;
+    const projectDir =
+      tempDir && typeof tempDir === "string" && tempDir.trim() !== ""
+        ? path.join(tempDir, projectName)
+        : projectDirFromYaml;
     const commands = projectConfig.commands;
 
     if (!projectDir || typeof projectDir !== "string") {
-      throw new Error(`Project '${projectName}' must define project_dir`);
+      throw new Error(
+        `Project '${projectName}' must define project_dir or set TEMP_DIR`
+      );
     }
     if (!commands || typeof commands !== "object") {
       throw new Error(`Project '${projectName}' must define commands`);
+    }
+    if (githubRepo !== undefined && typeof githubRepo !== "string") {
+      throw new Error(`Project '${projectName}' github_repo must be a string`);
+    }
+    if (branch !== undefined && typeof branch !== "string") {
+      throw new Error(`Project '${projectName}' branch must be a string`);
+    }
+    if (promptDir !== undefined && typeof promptDir !== "string") {
+      throw new Error(`Project '${projectName}' prompt_dir must be a string`);
     }
 
     for (const [action, commandConfig] of Object.entries(commands)) {
@@ -84,6 +102,9 @@ function buildQueueRoutes(projects) {
         projectName,
         action,
         projectDir,
+        githubRepo: githubRepo ? githubRepo.trim() : "",
+        branch: branch ? branch.trim() : "",
+        promptDir: promptDir ? promptDir.trim() : "",
         cmd,
       });
     }
@@ -99,6 +120,7 @@ function buildQueueRoutes(projects) {
 function loadConfig() {
   const configPath = process.env.CONFIG_PATH || "config/agent-orchestrator.yaml";
   const yamlConfig = loadYamlConfig(configPath);
+  const tempDir = process.env.TEMP_DIR || "";
 
   const rabbitmqHost = requiredEnv("RABBITMQ_HOST");
   const notifyEmail = process.env.NOTIFY_EMAIL || process.env.EMAIL_TO;
@@ -112,6 +134,8 @@ function loadConfig() {
     rabbitmqHost,
     notifyEmail,
     mailBin: process.env.MAIL_BIN || "mail",
+    commandDir: process.env.COMMAND_DIR || "",
+    tempDir,
     concurrency: parsePositiveInt(process.env.CONCURRENCY, 1, "CONCURRENCY"),
     commandTimeoutMs: parsePositiveInt(
       process.env.COMMAND_TIMEOUT_MS,
@@ -123,7 +147,7 @@ function loadConfig() {
       1024 * 1024,
       "OUTPUT_LIMIT_BYTES"
     ),
-    queueRoutes: buildQueueRoutes(yamlConfig.projects),
+    queueRoutes: buildQueueRoutes(yamlConfig.projects, tempDir),
   };
 }
 

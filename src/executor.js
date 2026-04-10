@@ -1,4 +1,5 @@
 const { spawn } = require("child_process");
+const fs = require("fs");
 
 function trimBuffer(buffer, limitBytes) {
   if (buffer.length <= limitBytes) {
@@ -12,9 +13,36 @@ function trimBuffer(buffer, limitBytes) {
 
 function runCommandWithStdin({ cmd, cwd, stdinJson, timeoutMs, outputLimitBytes }) {
   return new Promise((resolve) => {
-    const child = spawn(cmd, {
+    if (!cwd || !fs.existsSync(cwd)) {
+      resolve({
+        exitCode: null,
+        signal: null,
+        timedOut: false,
+        stdout: "",
+        stderr: `Failed to start command: working directory does not exist: ${cwd}`,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      });
+      return;
+    }
+
+    const argv = splitCommand(cmd);
+    if (argv.length === 0) {
+      resolve({
+        exitCode: null,
+        signal: null,
+        timedOut: false,
+        stdout: "",
+        stderr: "Failed to start command: empty command",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      });
+      return;
+    }
+
+    const child = spawn(argv[0], argv.slice(1), {
       cwd,
-      shell: true,
+      shell: false,
       stdio: ["pipe", "pipe", "pipe"],
     });
 
@@ -110,6 +138,63 @@ function runCommandWithStdin({ cmd, cwd, stdinJson, timeoutMs, outputLimitBytes 
     child.stdin.write(stdinJson);
     child.stdin.end();
   });
+}
+
+function splitCommand(command) {
+  if (typeof command !== "string") {
+    return [];
+  }
+
+  const tokens = [];
+  let current = "";
+  let quote = null;
+
+  for (let i = 0; i < command.length; i += 1) {
+    const char = command[i];
+
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      } else if (char === "\\" && quote === '"') {
+        i += 1;
+        if (i < command.length) {
+          current += command[i];
+        }
+      } else {
+        current += char;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+
+    if (/\s/.test(char)) {
+      if (current.length > 0) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+
+    if (char === "\\") {
+      i += 1;
+      if (i < command.length) {
+        current += command[i];
+      }
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (current.length > 0) {
+    tokens.push(current);
+  }
+
+  return tokens;
 }
 
 module.exports = {
